@@ -1,0 +1,43 @@
+# =============================================================================
+# Build - Suba (CPU Only, No Release)
+#
+# Organization: zeayii
+# Project: suba
+#
+# 构建目标：
+#   - CPU 包：win-x64 / linux-x64 / osx-x64
+#   - 不处理 GPU 依赖，不创建 GitHub Release
+#   - 仅上传 Actions Artifacts，便于本地验证和快速回归
+#
+# 命名规则：
+#   - suba-{version}-{rid}-cpu.zip
+#
+# 核心约束：
+#   - 不创建 GitHub Release
+#   - 仅用于本地/测试验证
+# =============================================================================
+
+name: Build - Suba CPU
+
+on:
+    workflow_dispatch:
+        inputs:
+            version:
+                description: "Build label (free text, e.g. 0.0.0-local)"
+                required: true
+                default: "0.0.0-local"
+                type: string
+
+permissions:
+    contents: read
+
+jobs:
+    build:
+        uses: ./.github/workflows/suba-reusable-build.yml
+        with:
+            version: ${{ inputs.version }}
+            version_channel: dev
+            include_gpu: false
+            strip_debug_files: true
+            create_release: false
+            prerelease: false

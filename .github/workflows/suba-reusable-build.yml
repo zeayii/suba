@@ -1,0 +1,638 @@
+# =============================================================================
+# Reusable - Suba Build And Release
+#
+# Organization: zeayii
+# Project: suba
+#
+# 说明：
+#   - 该工作流用于复用构建与打包逻辑
+#   - 由入口工作流（stable/beta/cpu-only）通过 workflow_call 调用
+# =============================================================================
+
+name: Reusable - Suba Build And Release
+
+on:
+    workflow_call:
+        inputs:
+            version:
+                required: true
+                type: string
+            version_channel:
+                required: true
+                type: string
+            include_gpu:
+                required: true
+                type: boolean
+            strip_debug_files:
+                required: true
+                type: boolean
+            create_release:
+                required: true
+                type: boolean
+            prerelease:
+                required: false
+                type: boolean
+                default: false
+
+permissions:
+    contents: write
+
+jobs:
+    build:
+        name: Build ${{ matrix.rid }}
+        runs-on: ${{ matrix.os }}
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    -   os: windows-latest
+                        rid: win-x64
+                    -   os: ubuntu-latest
+                        rid: linux-x64
+                    -   os: macos-latest
+                        rid: osx-x64
+
+        steps:
+            # -----------------------------------------------------------------
+            # Step 1: Checkout
+            # -----------------------------------------------------------------
+            -   name: Checkout repository
+                uses: actions/checkout@v4
+
+            # -----------------------------------------------------------------
+            # Step 2: Validate version format by channel
+            # -----------------------------------------------------------------
+            -   name: Validate version format
+                shell: bash
+                run: |
+                    case "${{ inputs.version_channel }}" in
+                      stable)
+                        if [[ ! "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                          echo "::error::Invalid stable version '${{ inputs.version }}'. Expected X.Y.Z format."
+                          exit 1
+                        fi
+                        ;;
+                      beta)
+                        if [[ ! "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+                          echo "::error::Invalid beta version '${{ inputs.version }}'. Expected X.Y.Z-beta.N format."
+                          exit 1
+                        fi
+                        ;;
+                      dev)
+                        echo "Dev channel skips strict version validation."
+                        ;;
+                      *)
+                        echo "::error::Unsupported version_channel '${{ inputs.version_channel }}'."
+                        exit 1
+                        ;;
+                    esac
+
+            # -----------------------------------------------------------------
+            # Step 3: Setup .NET SDK
+            # -----------------------------------------------------------------
+            -   name: Setup .NET SDK
+                uses: actions/setup-dotnet@v4
+                with:
+                    dotnet-version: 10.0.x
+
+            # -----------------------------------------------------------------
+            # Step 4: Restore
+            # -----------------------------------------------------------------
+            -   name: Restore
+                run: dotnet restore Suba.sln
+
+            # -----------------------------------------------------------------
+            # Step 5: Publish AOT CPU package base
+            # -----------------------------------------------------------------
+            -   name: Publish AOT (CPU package base)
+                run: >
+                    dotnet publish Zeayii.Suba.CommandLine/Zeayii.Suba.CommandLine.csproj
+                    -c Release
+                    -r ${{ matrix.rid }}
+                    --self-contained true
+                    /p:PublishAot=true
+                    /p:PublishSingleFile=true
+                    /p:Version=${{ inputs.version }}
+                    -o artifacts/${{ matrix.rid }}/cpu
+
+            # -----------------------------------------------------------------
+            # Step 6: Normalize executable name to "suba"
+            # -----------------------------------------------------------------
+            -   name: Normalize executable name
+                shell: pwsh
+                run: |
+                    $publishRoot = Join-Path $PWD "artifacts/${{ matrix.rid }}/cpu"
+                    if ("${{ matrix.rid }}" -like "win-*") {
+                      $source = Join-Path $publishRoot "Zeayii.Suba.CommandLine.exe"
+                      $target = Join-Path $publishRoot "suba.exe"
+                    } else {
+                      $source = Join-Path $publishRoot "Zeayii.Suba.CommandLine"
+                      $target = Join-Path $publishRoot "suba"
+                    }
+
+                    if (Test-Path $source) {
+                      Move-Item -Path $source -Destination $target -Force
+                    }
+
+            # -----------------------------------------------------------------
+            # Step 7: Generate template/docs inside publish folder
+            # -----------------------------------------------------------------
+            -   name: Generate template and copy docs
+                shell: pwsh
+                run: |
+                    $cpuRoot = Join-Path $PWD "artifacts/${{ matrix.rid }}/cpu"
+                    $templatePath = Join-Path $cpuRoot "arguments.template.toml"
+                    if ("${{ matrix.rid }}" -like "win-*") {
+                      $binary = Join-Path $cpuRoot "suba.exe"
+                    } else {
+                      $binary = Join-Path $cpuRoot "suba"
+                    }
+
+                    if (!(Test-Path $binary)) {
+                      throw "CLI binary not found: $binary"
+                    }
+
+                    & $binary init --output $templatePath --overwrite
+                    if ($LASTEXITCODE -ne 0) {
+                      throw "Failed to generate arguments template."
+                    }
+
+                    Copy-Item -Path (Join-Path $PWD "README.md") -Destination (Join-Path $cpuRoot "README.md") -Force
+                    Copy-Item -Path (Join-Path $PWD "README.en.md") -Destination (Join-Path $cpuRoot "README.en.md") -Force
+
+            # -----------------------------------------------------------------
+            # Step 8: Strip debug files (release channel)
+            # -----------------------------------------------------------------
+            -   name: Strip debug files
+                if: ${{ inputs.strip_debug_files }}
+                shell: pwsh
+                run: |
+                    $cpuRoot = Join-Path $PWD "artifacts/${{ matrix.rid }}/cpu"
+                    Get-ChildItem -Path $cpuRoot -Recurse -File -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Extension -in @('.pdb', '.lib') } |
+                      Remove-Item -Force -ErrorAction SilentlyContinue
+
+            # -----------------------------------------------------------------
+            # Step 8.1: Normalize CPU payload by RID
+            # -----------------------------------------------------------------
+            -   name: Normalize CPU payload by RID
+                shell: pwsh
+                run: |
+                    $cpuRoot = Join-Path $PWD "artifacts/${{ matrix.rid }}/cpu"
+                    if ("${{ matrix.rid }}" -like "linux-*") {
+                      Get-ChildItem -Path $cpuRoot -Recurse -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Extension -in @('.dll', '.lib', '.pdb') } |
+                        Remove-Item -Force -ErrorAction SilentlyContinue
+                    } elseif ("${{ matrix.rid }}" -like "win-*") {
+                      Get-ChildItem -Path $cpuRoot -Recurse -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Extension -in @('.so', '.dylib', '.pdb', '.lib') } |
+                        Remove-Item -Force -ErrorAction SilentlyContinue
+                    } elseif ("${{ matrix.rid }}" -like "osx-*") {
+                      Get-ChildItem -Path $cpuRoot -Recurse -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Extension -in @('.dll', '.lib', '.pdb') } |
+                        Remove-Item -Force -ErrorAction SilentlyContinue
+                    }
+
+            # -----------------------------------------------------------------
+            # Step 9: Build GPU runtime package (Windows)
+            # -----------------------------------------------------------------
+            -   name: Build GPU runtime package (Windows)
+                if: ${{ inputs.include_gpu && startsWith(matrix.rid, 'win-') }}
+                shell: pwsh
+                run: |
+                    $cpuRoot = Join-Path $PWD "artifacts/${{ matrix.rid }}/cpu"
+                    $gpuRoot = Join-Path $PWD "artifacts/${{ matrix.rid }}/gpu"
+                    if (Test-Path $gpuRoot) {
+                      Remove-Item -Path $gpuRoot -Recurse -Force
+                    }
+                    New-Item -ItemType Directory -Path $gpuRoot -Force | Out-Null
+
+                    $copyPatterns = @(
+                      "suba.exe",
+                      "arguments.template.toml",
+                      "README.md",
+                      "README.en.md",
+                      "onnxruntime*",
+                      "libonnxruntime*"
+                    )
+                    if ("${{ inputs.strip_debug_files }}" -eq "false") {
+                      $copyPatterns += "*.pdb"
+                    }
+
+                    foreach ($pattern in $copyPatterns) {
+                      Get-ChildItem -Path $cpuRoot -File -Filter $pattern -ErrorAction SilentlyContinue |
+                        ForEach-Object { Copy-Item -Path $_.FullName -Destination $gpuRoot -Force }
+                    }
+
+                    $tempRoot = Join-Path $env:RUNNER_TEMP "nvidia-redist-win"
+                    $downloadRoot = Join-Path $tempRoot "downloads"
+                    $extractRoot = Join-Path $tempRoot "extract"
+                    New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
+                    New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
+
+                    function Get-LatestArchiveName([string]$indexUrl, [string]$nameRegex) {
+                      Write-Host "Resolving archive from index: $indexUrl"
+                      $response = Invoke-WebRequest -Uri $indexUrl -UseBasicParsing
+                      $matches = [regex]::Matches($response.Content, $nameRegex) | ForEach-Object { $_.Groups["name"].Value } | Sort-Object -Unique
+                      if (-not $matches -or $matches.Count -eq 0) {
+                        throw "No archive matched regex '$nameRegex' from '$indexUrl'."
+                      }
+                      return $matches[-1]
+                    }
+
+                    function Download-And-Extract([string]$indexUrl, [string]$nameRegex, [string]$prefix) {
+                      $archiveName = Get-LatestArchiveName -indexUrl $indexUrl -nameRegex $nameRegex
+                      $archiveUrl = "$indexUrl$archiveName"
+                      $archivePath = Join-Path $downloadRoot $archiveName
+                      Invoke-WebRequest -Uri $archiveUrl -OutFile $archivePath
+                      $target = Join-Path $extractRoot $prefix
+                      Expand-Archive -Path $archivePath -DestinationPath $target -Force
+                      Remove-Item -Path $archivePath -Force -ErrorAction SilentlyContinue
+                    }
+
+                    Download-And-Extract -indexUrl "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/windows-x86_64/" -nameRegex "(?<name>cuda_cudart-windows-x86_64-12\.[0-9]+\.[0-9]+(?:\.[0-9]+)?-archive\.zip)" -prefix "cuda_cudart"
+                    Download-And-Extract -indexUrl "https://developer.download.nvidia.com/compute/cuda/redist/libcublas/windows-x86_64/" -nameRegex "(?<name>libcublas-windows-x86_64-12\.[0-9]+\.[0-9]+(?:\.[0-9]+)?-archive\.zip)" -prefix "libcublas"
+                    Download-And-Extract -indexUrl "https://developer.download.nvidia.com/compute/cuda/redist/libcufft/windows-x86_64/" -nameRegex "(?<name>libcufft-windows-x86_64-12\.[0-9]+\.[0-9]+(?:\.[0-9]+)?-archive\.zip)" -prefix "libcufft"
+                    Download-And-Extract -indexUrl "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/" -nameRegex "(?<name>cudnn-windows-x86_64-[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?_cuda12-archive\.zip)" -prefix "cudnn"
+
+                    function Copy-RequiredDll([string]$targetName, [string]$searchPattern, [bool]$strictName = $true) {
+                      if ($strictName) {
+                        $candidate = Get-ChildItem -Path $extractRoot -Recurse -Filter $targetName -File | Select-Object -First 1
+                      } else {
+                        $candidate = Get-ChildItem -Path $extractRoot -Recurse -File | Where-Object { $_.Name -match $searchPattern } | Sort-Object Name | Select-Object -Last 1
+                      }
+                      if ($null -eq $candidate) {
+                        throw "Required runtime dependency '$targetName' was not found in downloaded archives."
+                      }
+                      Copy-Item -Path $candidate.FullName -Destination (Join-Path $gpuRoot $targetName) -Force
+                    }
+
+                    Copy-RequiredDll -targetName "cudart64_12.dll" -searchPattern "^cudart64_12\.dll$"
+                    Copy-RequiredDll -targetName "cublas64_12.dll" -searchPattern "^cublas64_12\.dll$"
+                    Copy-RequiredDll -targetName "cublasLt64_12.dll" -searchPattern "^cublasLt64_12\.dll$"
+                    Copy-RequiredDll -targetName "cufft64_11.dll" -searchPattern "^cufft64_[0-9]+\.dll$" -strictName $false
+                    Copy-RequiredDll -targetName "cudnn64_9.dll" -searchPattern "^cudnn64_9\.dll$"
+                    Copy-RequiredDll -targetName "cudnn_ops64_9.dll" -searchPattern "^cudnn_ops64_9\.dll$"
+                    Copy-RequiredDll -targetName "cudnn_graph64_9.dll" -searchPattern "^cudnn_graph64_9\.dll$"
+                    Copy-RequiredDll -targetName "cudnn_adv64_9.dll" -searchPattern "^cudnn_adv64_9\.dll$"
+                    Copy-RequiredDll -targetName "cudnn_cnn64_9.dll" -searchPattern "^cudnn_cnn64_9\.dll$"
+                    Copy-RequiredDll -targetName "cudnn_heuristic64_9.dll" -searchPattern "^cudnn_heuristic64_9\.dll$"
+                    Copy-RequiredDll -targetName "cudnn_engines_runtime_compiled64_9.dll" -searchPattern "^cudnn_engines_runtime_compiled64_9\.dll$"
+                    Copy-RequiredDll -targetName "cudnn_engines_precompiled64_9.dll" -searchPattern "^cudnn_engines_precompiled64_9\.dll$"
+
+                    # 清理临时目录，减少 runner 磁盘压力。
+                    Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+
+            # -----------------------------------------------------------------
+            # Step 10: Build GPU runtime package (Linux)
+            # -----------------------------------------------------------------
+            -   name: Build GPU runtime package (Linux)
+                if: ${{ inputs.include_gpu && startsWith(matrix.rid, 'linux-') }}
+                shell: bash
+                run: |
+                    set -euo pipefail
+                    cpu_root="artifacts/${{ matrix.rid }}/cpu"
+                    gpu_root="artifacts/${{ matrix.rid }}/gpu"
+                    rm -rf "$gpu_root"
+                    mkdir -p "$gpu_root"
+
+                    cp -f "$cpu_root/suba" "$gpu_root/" 2>/dev/null || true
+                    cp -f "$cpu_root/arguments.template.toml" "$gpu_root/" 2>/dev/null || true
+                    cp -f "$cpu_root/README.md" "$gpu_root/" 2>/dev/null || true
+                    cp -f "$cpu_root/README.en.md" "$gpu_root/" 2>/dev/null || true
+
+                    for pattern in "onnxruntime*" "libonnxruntime*"; do
+                      for file in "$cpu_root"/$pattern; do
+                        if [[ -f "$file" ]]; then
+                          cp -f "$file" "$gpu_root/"
+                        fi
+                      done
+                    done
+
+                    if [[ "${{ inputs.strip_debug_files }}" == "false" ]]; then
+                      for file in "$cpu_root"/*.pdb; do
+                        if [[ -f "$file" ]]; then
+                          cp -f "$file" "$gpu_root/"
+                        fi
+                      done
+                    fi
+
+                    temp_root="${RUNNER_TEMP}/nvidia-redist-linux"
+                    download_root="${temp_root}/downloads"
+                    extract_root="${temp_root}/extract"
+                    mkdir -p "$download_root" "$extract_root"
+
+                    latest_archive() {
+                      local index_url="$1"
+                      local regex="$2"
+                      echo "Resolving archive from index: ${index_url}" >&2
+                      curl -fsSL "$index_url" | grep -oE "$regex" | sort -u | tail -n 1
+                    }
+
+                    download_and_extract() {
+                      local index_url="$1"
+                      local regex="$2"
+                      local prefix="$3"
+                      local archive_name
+                      archive_name="$(latest_archive "$index_url" "$regex")"
+                      if [[ -z "$archive_name" ]]; then
+                        echo "No archive matched regex '$regex' from '$index_url'."
+                        exit 1
+                      fi
+                      local archive_url="${index_url}${archive_name}"
+                      local archive_path="${download_root}/${archive_name}"
+                      curl -fsSL "$archive_url" -o "$archive_path"
+                      local target="${extract_root}/${prefix}"
+                      mkdir -p "$target"
+                      tar -xf "$archive_path" -C "$target"
+                      rm -f "$archive_path"
+                    }
+
+                    download_and_extract "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/linux-x86_64/" "cuda_cudart-linux-x86_64-12\.[0-9]+\.[0-9]+(\.[0-9]+)?-archive\.tar\.xz" "cuda_cudart"
+                    download_and_extract "https://developer.download.nvidia.com/compute/cuda/redist/libcublas/linux-x86_64/" "libcublas-linux-x86_64-12\.[0-9]+\.[0-9]+(\.[0-9]+)?-archive\.tar\.xz" "libcublas"
+                    download_and_extract "https://developer.download.nvidia.com/compute/cuda/redist/libcufft/linux-x86_64/" "libcufft-linux-x86_64-12\.[0-9]+\.[0-9]+(\.[0-9]+)?-archive\.tar\.xz" "libcufft"
+                    download_and_extract "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/linux-x86_64/" "cudnn-linux-x86_64-[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?_cuda12-archive\.tar\.xz" "cudnn"
+
+                    copy_or_link_exact() {
+                      local soname="$1"
+                      local candidate
+                      candidate="$(find "$extract_root" -type f -name "${soname}*" | sort -u | tail -n 1 || true)"
+                      if [[ -z "$candidate" ]]; then
+                        echo "Required runtime dependency '${soname}' was not found in downloaded archives."
+                        exit 1
+                      fi
+                      cp "$candidate" "${gpu_root}/${soname}"
+                    }
+
+                    copy_or_link_alias() {
+                      local target_name="$1"
+                      local search_glob="$2"
+                      local candidate
+                      candidate="$(find "$extract_root" -type f -name "${search_glob}" | sort -u | tail -n 1 || true)"
+                      if [[ -z "$candidate" ]]; then
+                        echo "Required runtime dependency '${target_name}' was not found in downloaded archives."
+                        exit 1
+                      fi
+                      cp "$candidate" "${gpu_root}/${target_name}"
+                    }
+
+                    copy_or_link_exact "libcudart.so.12"
+                    copy_or_link_exact "libcublas.so.12"
+                    copy_or_link_exact "libcublasLt.so.12"
+                    copy_or_link_alias "libcufft.so.11" "libcufft.so.*"
+                    copy_or_link_exact "libcudnn.so.9"
+                    copy_or_link_exact "libcudnn_ops.so.9"
+                    copy_or_link_exact "libcudnn_graph.so.9"
+                    copy_or_link_exact "libcudnn_adv.so.9"
+                    copy_or_link_exact "libcudnn_cnn.so.9"
+                    copy_or_link_exact "libcudnn_heuristic.so.9"
+                    copy_or_link_exact "libcudnn_engines_runtime_compiled.so.9"
+                    copy_or_link_exact "libcudnn_engines_precompiled.so.9"
+
+                    # 清理临时目录，减少 runner 磁盘压力。
+                    rm -rf "$temp_root"
+
+            # -----------------------------------------------------------------
+            # Step 11: Pack zip artifacts
+            # -----------------------------------------------------------------
+            -   name: Pack CPU zip artifact
+                shell: pwsh
+                run: |
+                    $ErrorActionPreference = 'Stop'
+
+                    function New-ZeayiiZip([string]$sourceDir, [string]$zipPath) {
+                      if (!(Test-Path $sourceDir -PathType Container)) {
+                        throw "Source directory does not exist: $sourceDir"
+                      }
+
+                      if (Test-Path $zipPath) {
+                        Remove-Item $zipPath -Force
+                      }
+
+                      [System.IO.Compression.ZipFile]::CreateFromDirectory(
+                        $sourceDir,
+                        $zipPath,
+                        [System.IO.Compression.CompressionLevel]::Optimal,
+                        $true
+                      )
+                    }
+
+                    $outputRoot = Join-Path $PWD "artifacts/release"
+                    New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+
+                    if ("${{ inputs.version_channel }}" -eq "dev") {
+                      $baseName = "suba-${{ inputs.version }}-${{ matrix.rid }}"
+                    } else {
+                      $baseName = "suba-v${{ inputs.version }}-${{ matrix.rid }}"
+                    }
+
+                    $cpuRoot = Join-Path $PWD "artifacts/${{ matrix.rid }}/cpu"
+                    $cpuPackageRoot = Join-Path $PWD "artifacts/${{ matrix.rid }}/package/cpu"
+                    if (Test-Path $cpuPackageRoot) {
+                      Remove-Item -Path $cpuPackageRoot -Recurse -Force
+                    }
+                    New-Item -ItemType Directory -Path $cpuPackageRoot -Force | Out-Null
+                    Copy-Item -Path $cpuRoot -Destination (Join-Path $cpuPackageRoot "suba") -Recurse -Force
+                    $cpuSuffix = if ("${{ inputs.version_channel }}" -eq "beta") { "-cpu-beta.zip" } else { "-cpu.zip" }
+                    $cpuZip = Join-Path $outputRoot ($baseName + $cpuSuffix)
+                    New-ZeayiiZip -sourceDir (Join-Path $cpuPackageRoot "suba") -zipPath $cpuZip
+                    if (!(Test-Path $cpuZip -PathType Leaf)) {
+                      throw "CPU package was not created as a file: $cpuZip"
+                    }
+
+            # -----------------------------------------------------------------
+            # Step 12: Pack GPU zip artifact
+            # -----------------------------------------------------------------
+            -   name: Pack GPU zip artifact
+                if: ${{ inputs.include_gpu && (startsWith(matrix.rid, 'win-') || startsWith(matrix.rid, 'linux-')) }}
+                shell: pwsh
+                run: |
+                    $ErrorActionPreference = 'Stop'
+
+                    function New-ZeayiiZip([string]$sourceDir, [string]$zipPath) {
+                      if (!(Test-Path $sourceDir -PathType Container)) {
+                        throw "Source directory does not exist: $sourceDir"
+                      }
+
+                      if (Test-Path $zipPath) {
+                        Remove-Item $zipPath -Force
+                      }
+
+                      [System.IO.Compression.ZipFile]::CreateFromDirectory(
+                        $sourceDir,
+                        $zipPath,
+                        [System.IO.Compression.CompressionLevel]::Optimal,
+                        $true
+                      )
+                    }
+
+                    Write-Host "GPU packaging enabled for RID: ${{ matrix.rid }}"
+                    $outputRoot = Join-Path $PWD "artifacts/release"
+                    New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+
+                    if ("${{ inputs.version_channel }}" -eq "dev") {
+                      $baseName = "suba-${{ inputs.version }}-${{ matrix.rid }}"
+                    } else {
+                      $baseName = "suba-v${{ inputs.version }}-${{ matrix.rid }}"
+                    }
+
+                    $gpuRoot = Join-Path $PWD "artifacts/${{ matrix.rid }}/gpu"
+                    if (!(Test-Path $gpuRoot -PathType Container)) {
+                        throw "GPU root directory not found: $gpuRoot"
+                    }
+
+                    if ("${{ matrix.rid }}" -like "linux-*") {
+                      Get-ChildItem -Path $gpuRoot -Recurse -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Extension -in @('.dll', '.lib', '.pdb') } |
+                        Remove-Item -Force -ErrorAction SilentlyContinue
+                    } elseif ("${{ matrix.rid }}" -like "win-*") {
+                      Get-ChildItem -Path $gpuRoot -Recurse -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Extension -in @('.so', '.dylib', '.pdb', '.lib') } |
+                        Remove-Item -Force -ErrorAction SilentlyContinue
+                    }
+
+                    Write-Host "GPU root files:"
+                    Get-ChildItem -Path $gpuRoot -File | Sort-Object Name | ForEach-Object { Write-Host " - $($_.Name)" }
+
+                    $gpuPackageRoot = Join-Path $PWD "artifacts/${{ matrix.rid }}/package/gpu"
+                    if (Test-Path $gpuPackageRoot) {
+                      Remove-Item -Path $gpuPackageRoot -Recurse -Force
+                    }
+                    New-Item -ItemType Directory -Path $gpuPackageRoot -Force | Out-Null
+                    Copy-Item -Path $gpuRoot -Destination (Join-Path $gpuPackageRoot "suba") -Recurse -Force
+                    $gpuSuffix = if ("${{ inputs.version_channel }}" -eq "beta") { "-gpu-beta.zip" } else { "-gpu.zip" }
+                    $gpuZip = Join-Path $outputRoot ($baseName + $gpuSuffix)
+                    Write-Host "GPU zip path: $gpuZip"
+                    New-ZeayiiZip -sourceDir (Join-Path $gpuPackageRoot "suba") -zipPath $gpuZip
+                    if (!(Test-Path $gpuZip -PathType Leaf)) {
+                      throw "GPU package was not created as a file: $gpuZip"
+                    }
+
+                    $gpuZipInfo = Get-Item -Path $gpuZip -ErrorAction Stop
+                    Write-Host "GPU zip created: $($gpuZipInfo.FullName) ($($gpuZipInfo.Length) bytes)"
+
+            # -----------------------------------------------------------------
+            # Step 13: Validate packaged CPU artifact
+            # -----------------------------------------------------------------
+            -   name: Validate packaged CPU artifact
+                shell: pwsh
+                run: |
+                    $outputRoot = Join-Path $PWD "artifacts/release"
+                    if (!(Test-Path $outputRoot)) {
+                      throw "Release artifact directory not found: $outputRoot"
+                    }
+
+                    Write-Host "Packaged files under ${outputRoot}:"
+                    Get-ChildItem -Path $outputRoot -File | Sort-Object Name | ForEach-Object { Write-Host " - $($_.Name)" }
+
+                    $rid = "${{ matrix.rid }}"
+                    if ("${{ inputs.version_channel }}" -eq "dev") {
+                      $baseName = "suba-${{ inputs.version }}-$rid"
+                    } else {
+                      $baseName = "suba-v${{ inputs.version }}-$rid"
+                    }
+
+                    $cpuSuffix = if ("${{ inputs.version_channel }}" -eq "beta") { "-cpu-beta.zip" } else { "-cpu.zip" }
+                    $cpuZip = Join-Path $outputRoot ($baseName + $cpuSuffix)
+                    if (!(Test-Path $cpuZip -PathType Leaf)) {
+                      throw "Required CPU package not found: $cpuZip"
+                    }
+
+            # -----------------------------------------------------------------
+            # Step 14: Validate packaged GPU artifact
+            # -----------------------------------------------------------------
+            -   name: Validate packaged GPU artifact
+                if: ${{ inputs.include_gpu && (startsWith(matrix.rid, 'win-') || startsWith(matrix.rid, 'linux-')) }}
+                shell: pwsh
+                run: |
+                    $outputRoot = Join-Path $PWD "artifacts/release"
+                    if (!(Test-Path $outputRoot -PathType Container)) {
+                      throw "Release artifact directory not found: $outputRoot"
+                    }
+
+                    $rid = "${{ matrix.rid }}"
+                    if ("${{ inputs.version_channel }}" -eq "dev") {
+                      $baseName = "suba-${{ inputs.version }}-$rid"
+                    } else {
+                      $baseName = "suba-v${{ inputs.version }}-$rid"
+                    }
+
+                    $gpuSuffix = if ("${{ inputs.version_channel }}" -eq "beta") { "-gpu-beta.zip" } else { "-gpu.zip" }
+                    $gpuZip = Join-Path $outputRoot ($baseName + $gpuSuffix)
+                    if (!(Test-Path $gpuZip -PathType Leaf)) {
+                      throw "Required GPU package not found: $gpuZip"
+                    }
+
+            # -----------------------------------------------------------------
+            # Step 15: Upload artifacts
+            # -----------------------------------------------------------------
+            -   name: Upload artifacts
+                uses: actions/upload-artifact@v4
+                with:
+                    name: suba-${{ matrix.rid }}-${{ inputs.version_channel }}
+                    path: artifacts/release/*.zip
+                    if-no-files-found: error
+
+    release:
+        name: Create GitHub Release
+        runs-on: ubuntu-latest
+        needs: [build]
+        if: ${{ inputs.create_release }}
+        steps:
+            # -----------------------------------------------------------------
+            # Step 1: Checkout
+            # -----------------------------------------------------------------
+            -   name: Checkout repository
+                uses: actions/checkout@v4
+
+            # -----------------------------------------------------------------
+            # Step 2: Download artifacts
+            # -----------------------------------------------------------------
+            -   name: Download artifacts
+                uses: actions/download-artifact@v4
+                with:
+                    path: release-assets
+
+            # -----------------------------------------------------------------
+            # Step 3: Validate downloaded artifacts
+            # -----------------------------------------------------------------
+            -   name: Validate downloaded artifacts
+                shell: bash
+                run: |
+                    set -euo pipefail
+                    echo "Downloaded release assets:"
+                    find release-assets -type f -name '*.zip' -print | sort
+                    count="$(find release-assets -type f -name '*.zip' | wc -l | tr -d ' ')"
+                    if [[ "$count" -eq 0 ]]; then
+                      echo "::error::No zip assets were downloaded for release publishing."
+                      exit 1
+                    fi
+
+            # -----------------------------------------------------------------
+            # Step 4: Ensure git tag exists
+            # -----------------------------------------------------------------
+            -   name: Ensure git tag exists
+                run: |
+                    set -euo pipefail
+                    tag="v${{ inputs.version }}"
+                    git fetch --tags
+                    if git rev-parse "$tag" >/dev/null 2>&1; then
+                      echo "Tag $tag already exists."
+                    else
+                      git config user.name "github-actions[bot]"
+                      git config user.email "github-actions[bot]@users.noreply.github.com"
+                      git tag "$tag"
+                      git push origin "$tag"
+                    fi
+
+            # -----------------------------------------------------------------
+            # Step 5: Create GitHub Release
+            # -----------------------------------------------------------------
+            -   name: Create GitHub Release
+                uses: softprops/action-gh-release@v2
+                with:
+                    tag_name: v${{ inputs.version }}
+                    prerelease: ${{ inputs.prerelease }}
+                    generate_release_notes: true
+                    overwrite_files: true
+                    files: release-assets/**/*.zip

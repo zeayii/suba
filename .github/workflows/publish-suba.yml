@@ -1,0 +1,44 @@
+# =============================================================================
+# Publish - Suba (Stable Release)
+#
+# Organization: zeayii
+# Project: suba
+#
+# 发布目标：
+#   - CPU 包：win-x64 / linux-x64 / osx-x64
+#   - GPU 包：win-x64 / linux-x64
+#   - 产物结构：zip 内统一为 suba/ 目录
+#
+# 命名规则：
+#   - suba-v{version}-{rid}-cpu.zip
+#   - suba-v{version}-{rid}-gpu.zip
+#
+# 核心约束：
+#   - 版本号必须严格 X.Y.Z
+#   - 发布到 GitHub Release（正式版）
+#   - 正式版移除调试符号文件（pdb/lib）
+# =============================================================================
+
+name: Publish - Suba
+
+on:
+    workflow_dispatch:
+        inputs:
+            version:
+                description: "Release version (strict X.Y.Z, e.g. 0.1.0)"
+                required: true
+                type: string
+
+permissions:
+    contents: write
+
+jobs:
+    publish:
+        uses: ./.github/workflows/suba-reusable-build.yml
+        with:
+            version: ${{ inputs.version }}
+            version_channel: stable
+            include_gpu: true
+            strip_debug_files: true
+            create_release: true
+            prerelease: false
