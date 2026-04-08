@@ -13,6 +13,11 @@ namespace Zeayii.Suba.Presentation.Window.Layout;
 internal static class TaskListRenderer
 {
     /// <summary>
+    /// Zeayii 焦点边框样式。
+    /// </summary>
+    private static readonly Style FocusedBorderStyle = new(foreground: PresentationPalette.Info);
+
+    /// <summary>
     /// Zeayii 任务名称最大显示字符数。
     /// </summary>
     private const int TaskNameMaxChars = 26;
@@ -72,7 +77,10 @@ internal static class TaskListRenderer
         }
 
         var title = $"Tasks ({tasks.Count}) {BuildProgressText(state.TaskRegion)}";
-        return new Panel(table).Header(new PanelHeader(title)).Expand();
+        return new Panel(table)
+            .Header(new PanelHeader(title))
+            .BorderStyle(state.ActiveRegion == DashboardState.FocusRegion.Tasks ? FocusedBorderStyle : Style.Plain)
+            .Expand();
     }
 
     /// <summary>

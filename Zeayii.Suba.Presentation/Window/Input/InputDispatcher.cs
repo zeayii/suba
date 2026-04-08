@@ -16,50 +16,92 @@ internal static class InputDispatcher
     {
         ArgumentNullException.ThrowIfNull(state);
 
-        if ((keyInfo.Modifiers & ConsoleModifiers.Control) == ConsoleModifiers.Control && keyInfo.Key == ConsoleKey.X)
+        if (keyInfo.Key == ConsoleKey.Enter && state.ExitPending)
         {
             state.ShouldExit = true;
             return;
         }
 
-        if ((keyInfo.Modifiers & ConsoleModifiers.Alt) == ConsoleModifiers.Alt)
+        if (keyInfo.Key == ConsoleKey.Q && keyInfo.Modifiers == 0)
         {
-            switch (keyInfo.Key)
-            {
-                case ConsoleKey.UpArrow:
-                {
-                    state.AutoFollowTask = false;
-                    state.TaskRegion.ScrollLine(-1);
-                    return;
-                }
-                case ConsoleKey.DownArrow:
-                {
-                    state.AutoFollowTask = false;
-                    state.TaskRegion.ScrollLine(1);
-                    return;
-                }
-                case ConsoleKey.PageUp:
-                {
-                    state.AutoFollowTask = false;
-                    state.TaskRegion.ScrollPage(-1);
-                    return;
-                }
-                case ConsoleKey.PageDown:
-                {
-                    state.AutoFollowTask = false;
-                    state.TaskRegion.ScrollPage(1);
-                    return;
-                }
-                case ConsoleKey.Home:
-                {
-                    state.TaskRegion.StickToTop();
-                    state.AutoFollowTask = true;
-                    return;
-                }
-            }
+            state.ExitPending = true;
+            return;
         }
 
-        switch (keyInfo.Key)
+        state.ExitPending = false;
+
+        if (keyInfo.Key == ConsoleKey.Tab && keyInfo.Modifiers == 0)
+        {
+            state.ActiveRegion = state.ActiveRegion == DashboardState.FocusRegion.Tasks
+                ? DashboardState.FocusRegion.Logs
+                : DashboardState.FocusRegion.Tasks;
+            return;
+        }
+
+        if (keyInfo.Modifiers != 0)
+        {
+            return;
+        }
+
+        if (state.ActiveRegion == DashboardState.FocusRegion.Tasks)
+        {
+            HandleTaskKey(state, keyInfo.Key);
+            return;
+        }
+
+        HandleLogKey(state, keyInfo.Key);
+    }
+
+    /// <summary>
+    /// Zeayii 处理任务区域按键。
+    /// </summary>
+    /// <param name="state">Zeayii 仪表盘状态。</param>
+    /// <param name="key">Zeayii 按键。</param>
+    private static void HandleTaskKey(DashboardState state, ConsoleKey key)
+    {
+        switch (key)
+        {
+            case ConsoleKey.UpArrow:
+            {
+                state.AutoFollowTask = false;
+                state.TaskRegion.ScrollLine(-1);
+                break;
+            }
+            case ConsoleKey.DownArrow:
+            {
+                state.AutoFollowTask = false;
+                state.TaskRegion.ScrollLine(1);
+                break;
+            }
+            case ConsoleKey.PageUp:
+            {
+                state.AutoFollowTask = false;
+                state.TaskRegion.ScrollPage(-1);
+                break;
+            }
+            case ConsoleKey.PageDown:
+            {
+                state.AutoFollowTask = false;
+                state.TaskRegion.ScrollPage(1);
+                break;
+            }
+            case ConsoleKey.Home:
+            {
+                state.TaskRegion.StickToTop();
+                state.AutoFollowTask = true;
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Zeayii 处理日志区域按键。
+    /// </summary>
+    /// <param name="state">Zeayii 仪表盘状态。</param>
+    /// <param name="key">Zeayii 按键。</param>
+    private static void HandleLogKey(DashboardState state, ConsoleKey key)
+    {
+        switch (key)
         {
             case ConsoleKey.UpArrow:
             {

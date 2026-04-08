@@ -13,6 +13,11 @@ namespace Zeayii.Suba.Presentation.Window.Layout;
 internal static class LogRenderer
 {
     /// <summary>
+    /// Zeayii 焦点边框样式。
+    /// </summary>
+    private static readonly Style FocusedBorderStyle = new(foreground: PresentationPalette.Info);
+
+    /// <summary>
     /// Zeayii 渲染日志面板。
     /// </summary>
     /// <param name="logs">Zeayii 日志快照。</param>
@@ -59,7 +64,10 @@ internal static class LogRenderer
         }
 
         var title = $"Logs ({logs.Count}) {BuildProgressText(state.LogRegion)}";
-        return new Panel(table).Header(new PanelHeader(title)).Expand();
+        return new Panel(table)
+            .Header(new PanelHeader(title))
+            .BorderStyle(state.ActiveRegion == DashboardState.FocusRegion.Logs ? FocusedBorderStyle : Style.Plain)
+            .Expand();
     }
 
     /// <summary>

@@ -177,7 +177,7 @@ internal sealed class ConsolePresentationManager(LogStore logStore, TaskStore ta
         var height = Math.Max(12, profile.Height);
 
         var header = HeaderRenderer.Render(tasks, _state.ConsoleLogLevel, _state.FileLogLevel);
-        var footer = InstructionRenderer.Render();
+        var footer = InstructionRenderer.Render(_state);
         const int headerHeight = 3;
         const int footerHeight = 3;
         var bodyLines = Math.Max(4, height - headerHeight - footerHeight);

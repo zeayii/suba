@@ -8,6 +8,15 @@ namespace Zeayii.Suba.Presentation.Window.State;
 internal sealed class DashboardState
 {
     /// <summary>
+    /// Zeayii 可聚焦区域。
+    /// </summary>
+    public enum FocusRegion
+    {
+        Tasks = 0,
+        Logs = 1
+    }
+
+    /// <summary>
     /// Zeayii 任务区域滚动状态。
     /// </summary>
     public ScrollRegion TaskRegion { get; } = new();
@@ -31,6 +40,16 @@ internal sealed class DashboardState
     /// Zeayii 退出标记。
     /// </summary>
     public bool ShouldExit { get; set; }
+
+    /// <summary>
+    /// Zeayii 退出确认状态（Q 后等待 Enter）。
+    /// </summary>
+    public bool ExitPending { get; set; }
+
+    /// <summary>
+    /// Zeayii 当前焦点区域。
+    /// </summary>
+    public FocusRegion ActiveRegion { get; set; } = FocusRegion.Tasks;
 
     /// <summary>
     /// Zeayii 是否跟随日志底部。
