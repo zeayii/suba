@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 using Zeayii.Suba.Presentation.Models;
+using Zeayii.Suba.Presentation.Window.Layout.Support;
 
 namespace Zeayii.Suba.Presentation.Window.Layout;
 
@@ -25,11 +26,11 @@ internal static class HeaderRenderer
         var succeeded = tasks.Count(static x => x.Status == Zeayii.Suba.Core.Orchestration.TaskStatus.Succeeded);
         var failed = tasks.Count(static x => x.Status == Zeayii.Suba.Core.Orchestration.TaskStatus.Failed);
 
-        var left = new Markup("[bold]Zeayii Suba[/]");
+        var left = new Markup($"[{PresentationPalette.Info}]Zeayii Suba[/]");
         var middleText = $"T:{total,5} P:{pending,5} R:{running,5} S:{succeeded,5} F:{failed,5}";
-        var middle = new Markup($"[grey]{Markup.Escape(middleText)}[/]");
+        var middle = new Markup($"[{PresentationPalette.Muted}]{Markup.Escape(middleText)}[/]");
         var rightText = $"Console:{consoleLevel} File:{fileLevel}";
-        var right = new Markup($"[deepskyblue1]{Markup.Escape(rightText)}[/]");
+        var right = new Markup($"[{PresentationPalette.Accent}]{Markup.Escape(rightText)}[/]");
 
         var grid = new Grid();
         grid.AddColumn(new GridColumn().NoWrap());

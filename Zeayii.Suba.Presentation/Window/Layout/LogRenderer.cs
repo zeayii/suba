@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 using Zeayii.Suba.Presentation.Models;
+using Zeayii.Suba.Presentation.Window.Layout.Support;
 using Zeayii.Suba.Presentation.Window.State;
 
 namespace Zeayii.Suba.Presentation.Window.Layout;
@@ -39,7 +40,7 @@ internal static class LogRenderer
 
         if (count == 0)
         {
-            table.AddRow(new Markup("[grey]No logs[/]"), new Markup(string.Empty));
+            table.AddRow(new Markup($"[{PresentationPalette.Muted}]No logs[/]"), new Markup(string.Empty));
         }
         else
         {
@@ -66,17 +67,17 @@ internal static class LogRenderer
     /// </summary>
     /// <param name="level">Zeayii 日志等级。</param>
     /// <returns>Zeayii 颜色名。</returns>
-    private static string ResolveColor(LogLevel level)
+    private static Color ResolveColor(LogLevel level)
     {
         return level switch
         {
-            LogLevel.Trace => "grey",
-            LogLevel.Debug => "steelblue1",
-            LogLevel.Information => "green",
-            LogLevel.Warning => "yellow",
-            LogLevel.Error => "red1",
-            LogLevel.Critical => "red",
-            _ => "white"
+            LogLevel.Trace => PresentationPalette.Muted,
+            LogLevel.Debug => Color.SteelBlue1,
+            LogLevel.Information => PresentationPalette.Success,
+            LogLevel.Warning => PresentationPalette.Warning,
+            LogLevel.Error => PresentationPalette.Failure,
+            LogLevel.Critical => PresentationPalette.Failure,
+            _ => PresentationPalette.Info
         };
     }
 

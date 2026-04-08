@@ -1,5 +1,6 @@
 using Spectre.Console;
 using Spectre.Console.Rendering;
+using Zeayii.Suba.Presentation.Window.Layout.Support;
 using Zeayii.Suba.Presentation.Window.Input;
 
 namespace Zeayii.Suba.Presentation.Window.Layout;
@@ -15,7 +16,7 @@ internal static class InstructionRenderer
     /// <returns>Zeayii 渲染对象。</returns>
     public static IRenderable Render()
     {
-        var text = $"[grey]Logs:[/] {Markup.Escape(InputBinding.LogScrollLines)} | {Markup.Escape(InputBinding.LogScrollPages)}   [grey]Tasks:[/] {Markup.Escape(InputBinding.TaskScrollLines)} | {Markup.Escape(InputBinding.TaskScrollPages)}   [red]Exit:[/] {Markup.Escape(InputBinding.Quit)}";
+        var text = $"[{PresentationPalette.Muted}]Logs:[/] {Markup.Escape(InputBinding.LogScrollLines)} | {Markup.Escape(InputBinding.LogScrollPages)}   [{PresentationPalette.Muted}]Tasks:[/] {Markup.Escape(InputBinding.TaskScrollLines)} | {Markup.Escape(InputBinding.TaskScrollPages)}   [{PresentationPalette.Failure}]Exit:[/] {Markup.Escape(InputBinding.Quit)}";
         return new Panel(Align.Center(new Markup(text))).Expand();
     }
 }

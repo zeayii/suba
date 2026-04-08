@@ -2,6 +2,7 @@ using Spectre.Console;
 using Spectre.Console.Rendering;
 using Zeayii.Suba.Core.Orchestration;
 using Zeayii.Suba.Presentation.Models;
+using Zeayii.Suba.Presentation.Window.Layout.Support;
 using Zeayii.Suba.Presentation.Window.State;
 
 namespace Zeayii.Suba.Presentation.Window.Layout;
@@ -47,7 +48,7 @@ internal static class TaskListRenderer
 
         if (count == 0)
         {
-            table.AddRow(new Markup("[grey]No tasks[/]"), new Markup(string.Empty), new Markup(string.Empty), new Markup(string.Empty), new Markup(string.Empty));
+            table.AddRow(new Markup($"[{PresentationPalette.Muted}]No tasks[/]"), new Markup(string.Empty), new Markup(string.Empty), new Markup(string.Empty), new Markup(string.Empty));
         }
         else
         {
@@ -80,27 +81,27 @@ internal static class TaskListRenderer
     /// <param name="stage">Zeayii 阶段。</param>
     /// <param name="status">Zeayii 状态。</param>
     /// <returns>Zeayii 颜色名。</returns>
-    private static string ResolveColor(TaskStage stage, Zeayii.Suba.Core.Orchestration.TaskStatus status)
+    private static Color ResolveColor(TaskStage stage, Zeayii.Suba.Core.Orchestration.TaskStatus status)
     {
         if (status == Zeayii.Suba.Core.Orchestration.TaskStatus.Failed || stage == TaskStage.Failed)
         {
-            return "red";
+            return PresentationPalette.Failure;
         }
 
         if (status == Zeayii.Suba.Core.Orchestration.TaskStatus.Succeeded || stage == TaskStage.Completed)
         {
-            return "green";
+            return PresentationPalette.Success;
         }
 
         return stage switch
         {
-            TaskStage.Transcribe => "deepskyblue1",
-            TaskStage.Translate => "orchid",
-            TaskStage.AudioPrepare => "yellow",
-            TaskStage.Vad => "yellow",
-            TaskStage.OverlapResolve => "khaki1",
-            TaskStage.SubtitleWrite => "steelblue1",
-            _ => "grey"
+            TaskStage.Transcribe => PresentationPalette.Accent,
+            TaskStage.Translate => Color.Orchid,
+            TaskStage.AudioPrepare => PresentationPalette.Warning,
+            TaskStage.Vad => PresentationPalette.Warning,
+            TaskStage.OverlapResolve => Color.Khaki1,
+            TaskStage.SubtitleWrite => Color.SteelBlue1,
+            _ => PresentationPalette.Muted
         };
     }
 
